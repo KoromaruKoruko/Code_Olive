@@ -53,7 +53,12 @@ public static class CodeOlive
     private static readonly Dictionary<string, Type> CoreLibrarys = new Dictionary<string, Type>();
     private static readonly Dictionary<String, Plugin> Plugins = new Dictionary<string, Plugin>();
 
-    public static void AddCoreLibrary(String Name, Type Class) => CoreLibrarys.Add(Name, Class);
+    public static void AddCoreLibrary(String Name, Type Class)
+    {
+        if (Plugins.Count > 0)
+            throw new InvalidOperationException();
+        CoreLibrarys.Add(Name, Class);
+    }
 
     /// <summary>
     /// Load and Hook A Plugin But Async
@@ -144,114 +149,89 @@ public static class CodeOlive
         switch (MountPointVersion)
         {
             case 1: // Current
+            {
+                // Get Version Data
+                FieldInfo VersionStr = MountPoint.GetField("Version");
+                if (VersionStr != null && VersionStr.FieldType == typeof(String))
                 {
-                    // Get Version Data
-                    FieldInfo VersionStr = MountPoint.GetField("Version");
-                    if (VersionStr != null && VersionStr.FieldType == typeof(String))
+                    PluginVersion? PV = PluginVersion.Parse(VersionStr.GetRawConstantValue() as String);
+                    if (PV.HasValue)
                     {
-                        PluginVersion? PV = PluginVersion.Parse(VersionStr.GetRawConstantValue() as String);
-                        if (PV.HasValue)
+                        Major = PV.Value.Major;
+                        Minor = PV.Value.Minor;
+                        if (PV.Value.Build != null)
                         {
-                            Major = PV.Value.Major;
-                            Minor = PV.Value.Minor;
-                            if (PV.Value.Build != null)
-                            {
-                                Build = PV.Value.Build;
-                                if (Build == "")
-                                    return new PluginLoadResult
-                                    {
-                                        Error = LoadError.NoOrInvalidCodeOliveInfoClass,
-                                        Version = new PluginVersion(Major, Minor, Build),
-                                    };
-
-                                char F = Build[0];
-                                if (F == '>' || F == '<')
-                                    return new PluginLoadResult
-                                    {
-                                        Error = LoadError.NoOrInvalidCodeOliveInfoClass,
-                                        Version = new PluginVersion(Major, Minor, Build),
-                                    };
-                            }
-                        }
-                        else
-                            return new PluginLoadResult
-                            {
-                                Error = LoadError.NoOrInvalidCodeOliveInfoClass,
-                                Version = new PluginVersion(Major, Minor, Build),
-                            };
-                    }
-                    else
-                    {
-                        FieldInfo MajorUInt = MountPoint.GetField("Version_Major");
-                        FieldInfo MinorUInt = MountPoint.GetField("Version_Minor");
-                        if (MajorUInt == null || MinorUInt == null || MajorUInt.FieldType != typeof(UInt32) || MinorUInt.FieldType != typeof(UInt32))
-                            return new PluginLoadResult
-                            {
-                                Error = LoadError.NoOrInvalidCodeOliveInfoClass,
-                                Version = new PluginVersion(Major, Minor, Build),
-                            };
-
-                        Major = (uint)MajorUInt.GetRawConstantValue();
-                        Minor = (uint)MinorUInt.GetRawConstantValue();
-
-                        FieldInfo BuildStr = MountPoint.GetField("Version_Build");
-                        if (BuildStr != null && BuildStr.FieldType == typeof(String))
-                        {
-                            Build = BuildStr.GetRawConstantValue() as String;
-                            if (Build != null)
-                            {
-                                if (Build == "")
-                                    return new PluginLoadResult
-                                    {
-                                        Error = LoadError.NoOrInvalidCodeOliveInfoClass,
-                                        Version = new PluginVersion(Major, Minor, Build),
-                                    };
-
-                                char F = Build[0];
-                                if (F == '>' || F == '<')
-                                    return new PluginLoadResult
-                                    {
-                                        Error = LoadError.NoOrInvalidCodeOliveInfoClass,
-                                        Version = new PluginVersion(Major, Minor, Build),
-                                    };
-                            }
-                        }
-                    }
-
-                    // Get Name
-                    FieldInfo NameStr = MountPoint.GetField("Name");
-                    if (NameStr != null && NameStr.FieldType == typeof(String))
-                    {
-                        String Name = NameStr.GetRawConstantValue() as String;
-                        if (Name != null || Name.Length == 0)
-                        {
-                            char F_N = Name[0];
-                            if (F_N == '>' || F_N == '<')
+                            Build = PV.Value.Build;
+                            if (Build == "")
                                 return new PluginLoadResult
                                 {
-                                    Error = LoadError.IlegalName,
-                                    OliveVersion = MountPointVersion,
+                                    Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                                     Version = new PluginVersion(Major, Minor, Build),
-                                    Name = Name,
                                 };
-                            else
-                            {
-                                PluginLoadResult Rest = new PluginLoadResult
+
+                            char F = Build[0];
+                            if (F == '>' || F == '<')
+                                return new PluginLoadResult
                                 {
-                                    Error = null,
-                                    OliveVersion = MountPointVersion,
+                                    Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                                     Version = new PluginVersion(Major, Minor, Build),
-                                    Name = Name,
+                                };
+                        }
+                    }
+                    else
+                        return new PluginLoadResult
+                        {
+                            Error = LoadError.NoOrInvalidCodeOliveInfoClass,
+                            Version = new PluginVersion(Major, Minor, Build),
+                        };
+                }
+                else
+                {
+                    FieldInfo MajorUInt = MountPoint.GetField("Version_Major");
+                    FieldInfo MinorUInt = MountPoint.GetField("Version_Minor");
+                    if (MajorUInt == null || MinorUInt == null || MajorUInt.FieldType != typeof(UInt32) || MinorUInt.FieldType != typeof(UInt32))
+                        return new PluginLoadResult
+                        {
+                            Error = LoadError.NoOrInvalidCodeOliveInfoClass,
+                            Version = new PluginVersion(Major, Minor, Build),
+                        };
+
+                    Major = (uint)MajorUInt.GetRawConstantValue();
+                    Minor = (uint)MinorUInt.GetRawConstantValue();
+
+                    FieldInfo BuildStr = MountPoint.GetField("Version_Build");
+                    if (BuildStr != null && BuildStr.FieldType == typeof(String))
+                    {
+                        Build = BuildStr.GetRawConstantValue() as String;
+                        if (Build != null)
+                        {
+                            if (Build == "")
+                                return new PluginLoadResult
+                                {
+                                    Error = LoadError.NoOrInvalidCodeOliveInfoClass,
+                                    Version = new PluginVersion(Major, Minor, Build),
                                 };
 
-                                // Find All Hard Dependencies
-
-                                HookPluginLoad(ref Rest, MountPoint, ASM, AssemblyLoadContext.GetLoadContext(ASM));
-
-                                return Rest;
-                            }
+                            char F = Build[0];
+                            if (F == '>' || F == '<')
+                                return new PluginLoadResult
+                                {
+                                    Error = LoadError.NoOrInvalidCodeOliveInfoClass,
+                                    Version = new PluginVersion(Major, Minor, Build),
+                                };
                         }
-                        else
+                    }
+                }
+
+                // Get Name
+                FieldInfo NameStr = MountPoint.GetField("Name");
+                if (NameStr != null && NameStr.FieldType == typeof(String))
+                {
+                    String Name = NameStr.GetRawConstantValue() as String;
+                    if (Name != null || Name.Length == 0)
+                    {
+                        char F_N = Name[0];
+                        if (F_N == '>' || F_N == '<')
                             return new PluginLoadResult
                             {
                                 Error = LoadError.IlegalName,
@@ -259,14 +239,39 @@ public static class CodeOlive
                                 Version = new PluginVersion(Major, Minor, Build),
                                 Name = Name,
                             };
+                        else
+                        {
+                            PluginLoadResult Rest = new PluginLoadResult
+                            {
+                                Error = null,
+                                OliveVersion = MountPointVersion,
+                                Version = new PluginVersion(Major, Minor, Build),
+                                Name = Name,
+                            };
+
+                            // Find All Hard Dependencies
+
+                            HookPluginLoad(ref Rest, MountPoint, ASM, AssemblyLoadContext.GetLoadContext(ASM));
+
+                            return Rest;
+                        }
                     }
-                    return new PluginLoadResult
-                    {
-                        Error = LoadError.IlegalName,
-                        OliveVersion = MountPointVersion,
-                        Version = new PluginVersion(Major, Minor, Build),
-                    };
+                    else
+                        return new PluginLoadResult
+                        {
+                            Error = LoadError.IlegalName,
+                            OliveVersion = MountPointVersion,
+                            Version = new PluginVersion(Major, Minor, Build),
+                            Name = Name,
+                        };
                 }
+                return new PluginLoadResult
+                {
+                    Error = LoadError.IlegalName,
+                    OliveVersion = MountPointVersion,
+                    Version = new PluginVersion(Major, Minor, Build),
+                };
+            }
 
             default:
                 return new PluginLoadResult
@@ -297,7 +302,7 @@ public static class CodeOlive
             {
                 String DPath = Path.GetFullPath(S);
                 AssemblyName As_n = AssemblyName.GetAssemblyName(DPath);
-                if(As_n.FullName == AN.FullName && As_n.CultureInfo.Name == AN.CultureInfo.Name && As_n.Version >= AN.Version)
+                if (As_n.FullName == AN.FullName && As_n.CultureInfo.Name == AN.CultureInfo.Name && As_n.Version >= AN.Version)
                     return ALC.LoadFromAssemblyPath(DPath);
             }
             return null;
@@ -328,20 +333,23 @@ public static class CodeOlive
             {
                 return false;
             }
-            lock (From.MRS)
+            if (From != null)
             {
-                int _inx = From.MRS.Length;
-                Array.Resize(ref From.MRS, _inx + 1);
-                From.MRS[_inx] = MRS;
-            }
-            lock (From.Dependents)
-            {
-                foreach (Plugin P in From.Dependents)
-                    if (P == EndResult)
-                        return true;
-                int _inx = From.Dependents.Length;
-                Array.Resize(ref From.Dependents, _inx + 1);
-                From.Dependents[_inx] = EndResult;
+                lock (From.MRS)
+                {
+                    int _inx = From.MRS.Length;
+                    Array.Resize(ref From.MRS, _inx + 1);
+                    From.MRS[_inx] = MRS;
+                }
+                lock (From.Dependents)
+                {
+                    foreach (Plugin P in From.Dependents)
+                        if (P == EndResult)
+                            return true;
+                    int _inx = From.Dependents.Length;
+                    Array.Resize(ref From.Dependents, _inx + 1);
+                    From.Dependents[_inx] = EndResult;
+                }
             }
             return true;
         }
@@ -357,41 +365,60 @@ public static class CodeOlive
                         switch (Attr.AttributeType.Name)
                         {
                             case "OliveSoftDependencyAttribute":
+                            {
+
+                                if (!(Attr.ConstructorArguments[0].Value is String Dep) ||
+                                    !(Attr.ConstructorArguments[1].Value is String DepFunc))
+                                    continue;
+
+                                int in_x = DepFunc.LastIndexOf('.');
+                                if (in_x > 0)
                                 {
+                                    String FuncName = DepFunc.Substring(in_x + 1);
+                                    DepFunc = DepFunc.Remove(in_x);
 
-                                    if (!(Attr.ConstructorArguments[0].Value is String Dep) ||
-                                        !(Attr.ConstructorArguments[1].Value is String DepFunc))
-                                        continue;
-
-                                    int in_x = DepFunc.LastIndexOf('.');
-                                    if (in_x > 0)
-                                    {
-                                        String FuncName = DepFunc.Substring(in_x + 1);
-                                        DepFunc = DepFunc.Remove(in_x);
-
-                                        if (SoftDeps.ContainsKey(Dep))
-                                            SoftDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
-                                        else
-                                            SoftDeps.Add(Dep, new List<Reflection_RemoteFunction>() { new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf } });
-                                    }
-                                    IsDefined = true;
+                                    if (SoftDeps.ContainsKey(Dep))
+                                        SoftDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
+                                    else
+                                        SoftDeps.Add(Dep, new List<Reflection_RemoteFunction>() { new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf } });
                                 }
-                                break;
+                                IsDefined = true;
+                            }
+                            break;
                             case "OliveHardDependencyAttribute":
+                            {
+
+                                if (!(Attr.ConstructorArguments[0].Value is String Dep) ||
+                                    !(Attr.ConstructorArguments[1].Value is String DepFunc))
+                                    continue;
+
+                                int in_x = DepFunc.LastIndexOf('.');
+                                if (in_x > 0)
                                 {
-
-                                    if (!(Attr.ConstructorArguments[0].Value is String Dep) ||
-                                        !(Attr.ConstructorArguments[1].Value is String DepFunc))
-                                        continue;
-
-                                    int in_x = DepFunc.LastIndexOf('.');
-                                    if (in_x > 0)
+                                    if (HardDeps.ContainsKey(Dep))
                                     {
-                                        String FuncName = DepFunc.Substring(in_x + 1);
-                                        DepFunc = DepFunc.Remove(in_x);
-
-                                        if (HardDeps.ContainsKey(Dep))
+                                        if (CoreLibrarys.ContainsKey(Dep))
                                         {
+                                            MethodInfo I = CoreLibrarys[Dep].GetMethod(DepFunc);
+                                            if (I != null)
+                                            {
+                                                if (!Inject(minf, I, null))
+                                                {
+                                                    EndResult.Unload();
+                                                    return;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                EndResult.Unload();
+                                                return;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            String FuncName = DepFunc.Substring(in_x + 1);
+                                            DepFunc = DepFunc.Remove(in_x);
+
                                             if (LoadTriggers.ContainsKey(Dep))
                                             {
                                                 if (LoadTriggers[Dep].IsSet)
@@ -423,19 +450,19 @@ public static class CodeOlive
                                                 else
                                                     HardDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
                                             }
-                                            else
-                                                HardDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
                                         }
                                         else
-                                            HardDeps.Add(Dep, new List<Reflection_RemoteFunction>() { new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf } });
+                                            HardDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
                                     }
-                                    IsDefined = true;
+                                    else
+                                        HardDeps.Add(Dep, new List<Reflection_RemoteFunction>() { new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf } });
                                 }
-                                break;
+                                IsDefined = true;
+                            }
+                            break;
                         }
                         if (IsDefined)
                             break;
-
                     }
                 });
         });
@@ -594,11 +621,11 @@ public static class CodeOlive
                 }
                 catch
                 {
-                        HardDeps = null;
-                        SoftDeps = null;
-                        EndResult.State = LoadState.Crashed;
-                        EndResult.Unload();
-                        return;
+                    HardDeps = null;
+                    SoftDeps = null;
+                    EndResult.State = LoadState.Crashed;
+                    EndResult.Unload();
+                    return;
                 }
             }
             if (OnStart != null)
@@ -625,7 +652,7 @@ public static class CodeOlive
             }
             EndResult.State = LoadState.Started;
         }
-        else if(OnStart == null)
+        else if (OnStart == null)
         {
             EndResult.State = LoadState.Started;
             Mountpt.GetMethod("Start")?.Invoke(null, null);
@@ -637,7 +664,7 @@ public static class CodeOlive
     /// </summary>
     public static void Start()
     {
-        if(OnStart != null)
+        if (OnStart != null)
             lock (OnStart)
             {
                 // Hook Any Soft Deps available
