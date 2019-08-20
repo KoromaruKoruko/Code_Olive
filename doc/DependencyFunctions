@@ -1,0 +1,7 @@
+Dependency Functions are functions defined to be outside the Plugin dll that are from another Plugin.
+They DO NOT include functions from External Dependencies ONLY ones from other Plugins.
+
+There are currently only 2 forms of dependencies Hard and Soft.
+
+Soft Dependency Functions: these *can* be loaded but if not found will not cause the plugin to *fail*.
+Hard Dependency Functions: these MUST be available in order for the plugin to get started otherwise it will be unloaded and *ignored*.
