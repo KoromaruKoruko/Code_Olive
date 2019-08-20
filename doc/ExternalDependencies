@@ -1,0 +1,4 @@
+if you Program uses non-System dependencies IE 'Newtonsoft.Json' you will need to keep them in a seperate folder this is called your Plugin Folder.
+Your Plugin Folder should be used to hold anything you need for your plugin this is so that you do not run into issues with other plugins and so that you dont clog up the plugin directory.
+
+External Dependecies get found like so {PathToYourPlugin}/{PluginFile}/*.dll Subdirectories are NOT checked, if you use something like Sqlite witch loads other dependencies i can't help you much there, however i am still comming up with a way around this issue.
