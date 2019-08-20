@@ -395,67 +395,63 @@ public static class CodeOlive
                                 int in_x = DepFunc.LastIndexOf('.');
                                 if (in_x > 0)
                                 {
+                                    String FuncName = DepFunc.Substring(in_x + 1);
+                                    DepFunc = DepFunc.Remove(in_x);
                                     if (HardDeps.ContainsKey(Dep))
                                     {
-                                        if (CoreLibrarys.ContainsKey(Dep))
+                                        if (LoadTriggers.ContainsKey(Dep))
                                         {
-                                            MethodInfo I = CoreLibrarys[Dep].GetMethod(DepFunc);
-                                            if (I != null)
+                                            if (LoadTriggers[Dep].IsSet)
                                             {
-                                                if (!Inject(minf, I, null))
+                                                Plugin Plg = LoadTriggers[Dep].Wait();
+                                                try
+                                                {
+                                                    MethodInfo I = Plg.Assembly.GetType(DepFunc)?.GetMethod(FuncName);
+                                                    if (I != null)
+                                                    {
+                                                        if (!Inject(minf, I, Plg))
+                                                        {
+                                                            EndResult.Unload();
+                                                            return;
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        EndResult.Unload();
+                                                        return;
+                                                    }
+                                                }
+                                                catch
                                                 {
                                                     EndResult.Unload();
                                                     return;
                                                 }
                                             }
                                             else
-                                            {
-                                                EndResult.Unload();
-                                                return;
-                                            }
-                                        }
-                                        else
-                                        {
-                                            String FuncName = DepFunc.Substring(in_x + 1);
-                                            DepFunc = DepFunc.Remove(in_x);
-
-                                            if (LoadTriggers.ContainsKey(Dep))
-                                            {
-                                                if (LoadTriggers[Dep].IsSet)
-                                                {
-                                                    Plugin Plg = LoadTriggers[Dep].Wait();
-                                                    try
-                                                    {
-                                                        MethodInfo I = Plg.Assembly.GetType(DepFunc)?.GetMethod(FuncName);
-                                                        if (I != null)
-                                                        {
-                                                            if (!Inject(minf, I, Plg))
-                                                            {
-                                                                EndResult.Unload();
-                                                                return;
-                                                            }
-                                                        }
-                                                        else
-                                                        {
-                                                            EndResult.Unload();
-                                                            return;
-                                                        }
-                                                    }
-                                                    catch
-                                                    {
-                                                        EndResult.Unload();
-                                                        return;
-                                                    }
-                                                }
-                                                else
-                                                    HardDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
-                                            }
+                                                HardDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
                                         }
                                         else
                                             HardDeps[Dep].Add(new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf });
                                     }
                                     else
                                         HardDeps.Add(Dep, new List<Reflection_RemoteFunction>() { new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf } });
+                                }
+                                else if(CoreLibrarys.ContainsKey(Dep))
+                                {
+                                    MethodInfo I = CoreLibrarys[Dep].GetMethod(DepFunc);
+                                    if (I != null)
+                                    {
+                                        if (!Inject(minf, I, null))
+                                        {
+                                            EndResult.Unload();
+                                            return;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        EndResult.Unload();
+                                        return;
+                                    }
                                 }
                                 IsDefined = true;
                             }
