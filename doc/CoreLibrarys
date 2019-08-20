@@ -1,2 +1,3 @@
 Core Library's are Classes in the game/Program witch can be accessed by the Plugin, where a normal Plugin Dependency function would require you list the class and method name, with Core Library's you will only have to list the method name.
 NOTE: Core Library's MUST be added before Plugins!
+NOTE: when refrencing a Core Library you will only be allowed to use the HARD Dependency Function Attribute and not the Soft one.
