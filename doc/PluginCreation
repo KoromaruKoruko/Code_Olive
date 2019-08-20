@@ -1,0 +1,15 @@
+Creating a Plugin is rather easy.
+
+Place Plugin.cs in your Project *suggested that you make .Net Standard Dll, not required however*. from there fill out the Class *you can rename the file but the class must be public and its name unchanged*.
+
+uint CodeOliveVersion : this is what CodeOlive Version the loader has to have in order to load the plugin, DO NOT CHANGE UNLESS YOU KNOW WHAT YOUR DOING!
+string Name : Name of your Plugin, used to find External Dependencies and for other plugins to hook onto your public functions.
+String Version : String Version of the Version Data Forat is so 'Major.Minor+Build' or 'Major.Minor', See ./VersionControl for more info
+uint Version_Major : Major used if 'String Version' is not there, used with 'uint Version_Minor'
+uint Version_Minor : Minor used if 'String Version' is not there, used with 'uint Version_Major'
+
+these are the functions, you can remove them if you do not use them!
+Note: if an Exception is thrown while the Loader is in these functions your plugin will be marked as Crashed and unloaded!
+static void Load() : This is called once the Plugin's assembly is loaded WARNING: Plugin Dependencies are NOT Loaded yet! this is for you to set up your exported functions (public functions)
+static void Init() : This is called once all your HARD Dependency Functions have been loaded, See: ./DpendencyFunctions
+static void Start() : this is called once the game/Program has called the Start function now this is when all your Soft Dependency Functions are loaded are you can do what eve it is your doing.
