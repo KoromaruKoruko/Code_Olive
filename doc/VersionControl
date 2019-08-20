@@ -1,0 +1,21 @@
+Currently Version Control only persists of the Game knowing what version the plugin is on, however soon it will be used to version check Dependency Functions, and load the latest version of your plugin.
+
+Your plugin version persists of 3 parts:
+  A Major, A Minor and a Build
+
+Major : this is the major build number
+Minor : this is the minor build number
+Build : this is the type of Plugin Ie Black, White, Alpha, Beta.....
+
+How are versions checked */ going to be checked*
+
+Versions are checked as such
+act : actual Plugin Version
+trg : Target Plugin Version
+
+(act.Major == trg.Minor &&
+  act.Minor >= act.Minor ||
+act.Major > trg.Major) &&
+    act.Build == trg.Build
+    
+Note: if a build is not specified it gets given a null value in witch case the above check validates the build correctly.
