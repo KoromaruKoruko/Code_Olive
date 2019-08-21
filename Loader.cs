@@ -178,7 +178,7 @@ public static class CodeOlive
     public static PluginLoadResult LoadPlugin(String PluginFile)
     {
 #if NETFRAMEWORK
-        static void Unload(AppDomain D) => AppDomain.Unload(D);
+        void Unload(AppDomain D) => AppDomain.Unload(D);
         byte[] B = new byte[20];
 #pragma warning disable SCS0005 // Weak random generator
         new Random().NextBytes(B);
