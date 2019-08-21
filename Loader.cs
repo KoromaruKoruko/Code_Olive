@@ -1,30 +1,131 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.IO;
+
+#if NETCOREAPP
+
 using System.Runtime.Loader; // Look in NuGet to get this.
+
+#endif
 
 public static class CodeOlive
 {
+#if NETFRAMEWORK // . Net Framework
+
+    private class OliveDomain //: IDisposable
+    {
+        public event Action OnUnload;
+
+        public readonly AppDomain Domain;
+        public String PluginPath;
+
+        public OliveDomain(string PluginPath, String Name)
+        {
+            String D = $"{PluginPath}{Path.DirectorySeparatorChar}{Name}{Path.DirectorySeparatorChar}";
+            if (!Directory.Exists(D))
+                Directory.CreateDirectory(D);
+            AppDomainSetup ADS = AppDomain.CurrentDomain.SetupInformation;
+            ADS.LoaderOptimization = LoaderOptimization.MultiDomain;
+            ADS.ApplicationBase = PluginPath;
+            ADS.PrivateBinPath = D;
+            this.Domain = AppDomain.CreateDomain($"OliveDomain_{Name}", null, ADS);
+            this.PluginPath = PluginPath;
+        }
+
+        public Assembly LoadFromAssemblyPath(String Path) => Domain.Load(AssemblyName.GetAssemblyName(Path));
+
+        public void Call(MethodInfo Function)
+        {
+            if (Function != null)
+                this.Domain.DoCallBack((CrossAppDomainDelegate)Function.CreateDelegate(typeof(CrossAppDomainDelegate)));
+        }
+
+        public void Unload() => this.Dispose();
+
+        public void Dispose()
+        {
+            OnUnload?.Invoke();
+            try
+            {
+                AppDomain.Unload(Domain);
+            }
+            catch { }
+        }
+    }
+
+#elif NETCOREAPP // . Net Core
+
+    private class OliveDomain : AssemblyLoadContext
+    {
+        public Plugin Plg;
+        public String PluginPath;
+
+        public OliveDomain(string PluginPath)
+        {
+            this.PluginPath = PluginPath;
+            this.Plg = new Plugin
+            {
+                State = LoadState.Awaiting,
+                Domain = this,
+                MRS = new MethodReplacementState[0],
+                Dependents = new Plugin[0],
+            };
+        }
+
+        protected override Assembly Load(AssemblyName AN)
+        {
+            Assembly ASM = base.Load(AN);
+            if (ASM != null)
+                return ASM;
+            foreach (String S in Directory.EnumerateFiles(this.PluginPath, "*.dll", SearchOption.TopDirectoryOnly))
+            {
+                String DPath = Path.GetFullPath(S);
+                AssemblyName As_n = AssemblyName.GetAssemblyName(DPath);
+                if (As_n.FullName == AN.FullName && As_n.CultureInfo.Name == AN.CultureInfo.Name && As_n.Version >= AN.Version)
+                    return this.LoadFromAssemblyPath(DPath);
+            }
+            return null;
+        }
+
+        public void Call(MethodInfo Function)
+        {
+            if (Function != null)
+                Function.Invoke(null, null);
+        }
+
+        public new void Unload()
+        {
+            Plg.Unload();
+            base.Unload();
+        }
+    }
+
+#endif
+
     private delegate void _OnLoaded(Plugin P);
+
     private class LoadSwitch
     {
         public event _OnLoaded OnLoaded;
+
         public LoadSwitch(Plugin Plg)
         {
             MRE = new ManualResetEvent(true);
             Return = Plg;
         }
+
         public LoadSwitch() => MRE = new ManualResetEvent(false);
 
         private readonly ManualResetEvent MRE;
         public bool IsSet => Return != null;
 
         public Plugin Return;
+
         public void Set(Plugin Plg)
         {
             Return = Plg;
@@ -48,8 +149,10 @@ public static class CodeOlive
 
     // Activation List to Load SoftDependencies (optimizer so i dont have as much overhead RAM during runtime, this will decreass loading speed during multiple plugins being loaded)
     private static List<Action> OnStart = new List<Action>();
+
     // Wait Triggers if Hard Dependencies are missing.
     private static readonly Dictionary<string, LoadSwitch> LoadTriggers = new Dictionary<string, LoadSwitch>();
+
     private static readonly Dictionary<string, Type> CoreLibrarys = new Dictionary<string, Type>();
     private static readonly Dictionary<String, Plugin> Plugins = new Dictionary<string, Plugin>();
 
@@ -74,7 +177,21 @@ public static class CodeOlive
     /// <returns>Plugin Load Result</returns>
     public static PluginLoadResult LoadPlugin(String PluginFile)
     {
-        Assembly ASM = Assembly.LoadFile(Path.GetFullPath(PluginFile));
+#if NETFRAMEWORK
+        static void Unload(AppDomain D) => AppDomain.Unload(D);
+        byte[] B = new byte[20];
+#pragma warning disable SCS0005 // Weak random generator
+        new Random().NextBytes(B);
+#pragma warning restore SCS0005 // Weak random generator
+        AppDomain Domain = AppDomain.CreateDomain($"tmp_{B}");
+        AssemblyName ASM_N = AssemblyName.GetAssemblyName(Path.GetFullPath(PluginFile));
+        Assembly ASM = Domain.Load(ASM_N);
+#elif NETCOREAPP
+        static void Unload(OliveDomain D) => D.Unload();
+        OliveDomain Domain = new OliveDomain(Path.GetDirectoryName(Path.GetFullPath(PluginFile)));
+        Assembly ASM = Domain.LoadFromAssemblyPath(Path.GetFullPath(PluginFile));
+#endif
+
         // Find Mount Types
         List<Type> MountPoints = new List<Type>();
         Parallel.ForEach(ASM.GetExportedTypes(), (Type T) =>
@@ -107,6 +224,8 @@ public static class CodeOlive
                         MountPointVersion = Ver;
                     }
                     else if (Ver == MountPointVersion)
+                    {
+                        Unload(Domain);
                         return new PluginLoadResult
                         {
                             Error = LoadError.NoOrInvalidCodeOliveInfoClass,
@@ -115,9 +234,12 @@ public static class CodeOlive
                             OliveVersion = UInt32.MaxValue,
                             Version = PluginVersion.Invalid,
                         };
+                    }
                 }
             }
             if (MountPoint == null)
+            {
+                Unload(Domain);
                 return new PluginLoadResult
                 {
                     Error = LoadError.NoOrInvalidCodeOliveInfoClass,
@@ -126,18 +248,22 @@ public static class CodeOlive
                     OliveVersion = UInt32.MaxValue,
                     Version = PluginVersion.Invalid,
                 };
+            }
         }
         else
         {
             MountPoint = MountPoints[0];
             FieldInfo Verin = MountPoint.GetField("CodeOliveVersion");
             if (Verin == null || Verin.FieldType != typeof(UInt32))
+            {
+                Unload(Domain);
                 return new PluginLoadResult
                 {
                     Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                     OliveVersion = 0,
                     Version = PluginVersion.Invalid,
                 };
+            }
             MountPointVersion = (uint)Verin.GetRawConstantValue();
         }
         MountPoints = null; // Ram Clean Up.
@@ -163,38 +289,50 @@ public static class CodeOlive
                         {
                             Build = PV.Value.Build;
                             if (Build == "")
+                            {
+                                Unload(Domain);
                                 return new PluginLoadResult
                                 {
                                     Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                                     Version = new PluginVersion(Major, Minor, Build),
                                 };
+                            }
 
                             char F = Build[0];
                             if (F == '>' || F == '<')
+                            {
+                                Unload(Domain);
                                 return new PluginLoadResult
                                 {
                                     Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                                     Version = new PluginVersion(Major, Minor, Build),
                                 };
+                            }
                         }
                     }
                     else
+                    {
+                        Unload(Domain);
                         return new PluginLoadResult
                         {
                             Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                             Version = new PluginVersion(Major, Minor, Build),
                         };
+                    }
                 }
                 else
                 {
                     FieldInfo MajorUInt = MountPoint.GetField("Version_Major");
                     FieldInfo MinorUInt = MountPoint.GetField("Version_Minor");
                     if (MajorUInt == null || MinorUInt == null || MajorUInt.FieldType != typeof(UInt32) || MinorUInt.FieldType != typeof(UInt32))
+                    {
+                        Unload(Domain);
                         return new PluginLoadResult
                         {
                             Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                             Version = new PluginVersion(Major, Minor, Build),
                         };
+                    }
 
                     Major = (uint)MajorUInt.GetRawConstantValue();
                     Minor = (uint)MinorUInt.GetRawConstantValue();
@@ -206,19 +344,25 @@ public static class CodeOlive
                         if (Build != null)
                         {
                             if (Build == "")
+                            {
+                                Unload(Domain);
                                 return new PluginLoadResult
                                 {
                                     Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                                     Version = new PluginVersion(Major, Minor, Build),
                                 };
+                            }
 
                             char F = Build[0];
                             if (F == '>' || F == '<')
+                            {
+                                Unload(Domain);
                                 return new PluginLoadResult
                                 {
                                     Error = LoadError.NoOrInvalidCodeOliveInfoClass,
                                     Version = new PluginVersion(Major, Minor, Build),
                                 };
+                            }
                         }
                     }
                 }
@@ -232,6 +376,8 @@ public static class CodeOlive
                     {
                         char F_N = Name[0];
                         if (F_N == '>' || F_N == '<')
+                        {
+                            Unload(Domain);
                             return new PluginLoadResult
                             {
                                 Error = LoadError.IlegalName,
@@ -239,6 +385,7 @@ public static class CodeOlive
                                 Version = new PluginVersion(Major, Minor, Build),
                                 Name = Name,
                             };
+                        }
                         else
                         {
                             PluginLoadResult Rest = new PluginLoadResult
@@ -250,13 +397,24 @@ public static class CodeOlive
                             };
 
                             // Find All Hard Dependencies
+#if NETFRAMEWORK
+                            String MpN = MountPoint.FullName;
+                            OliveDomain D = new OliveDomain(Path.GetDirectoryName(ASM.Location), Name);
+                            Unload(Domain);
+                            ASM = D.Domain.Load(ASM_N);
+                            MountPoint = ASM.GetType(MpN);
 
-                            HookPluginLoad(ref Rest, MountPoint, ASM, AssemblyLoadContext.GetLoadContext(ASM));
+                            HookPluginLoad(ref Rest, MountPoint, ASM, D);
+#elif NETCOREAPP
+                            HookPluginLoad(ref Rest, MountPoint, ASM, Domain);
+#endif
 
                             return Rest;
                         }
                     }
                     else
+                    {
+                        Unload(Domain);
                         return new PluginLoadResult
                         {
                             Error = LoadError.IlegalName,
@@ -264,7 +422,9 @@ public static class CodeOlive
                             Version = new PluginVersion(Major, Minor, Build),
                             Name = Name,
                         };
+                    }
                 }
+                Unload(Domain);
                 return new PluginLoadResult
                 {
                     Error = LoadError.IlegalName,
@@ -274,6 +434,7 @@ public static class CodeOlive
             }
 
             default:
+                Unload(Domain);
                 return new PluginLoadResult
                 {
                     Error = LoadError.OliveOutdated,
@@ -283,39 +444,30 @@ public static class CodeOlive
         }
     }
 
-    private static void HookPluginLoad(ref PluginLoadResult __inf, Type Mountpt, Assembly ASM, AssemblyLoadContext ALC)
+    private static void HookPluginLoad(ref PluginLoadResult __inf, Type Mountpt, Assembly ASM, OliveDomain Domain)
     {
-        Plugin EndResult = new Plugin()
+        Plugin Plg = new Plugin
         {
-            State = LoadState.Awaiting,
+            Domain = Domain,
+            Assembly = ASM,
             Name = __inf.Name,
             Version = __inf.Version,
-            Assembly = ASM,
             MountPoint = Mountpt,
             MRS = new MethodReplacementState[0],
             Dependents = new Plugin[0],
+            State = LoadState.Loaded,
         };
+        Domain.PluginPath = $"{Domain.PluginPath}{Path.DirectorySeparatorChar}{__inf.Name}";
+
         // This is used to laod External Assemblies refranced by the Plugin.
-        ALC.Resolving += (AssemblyLoadContext _, AssemblyName AN) =>
-        {
-            foreach (String S in Directory.EnumerateFiles($"{Path.GetDirectoryName(ASM.Location)}{Path.DirectorySeparatorChar}{EndResult.Name}", "*.dll", SearchOption.TopDirectoryOnly))
-            {
-                String DPath = Path.GetFullPath(S);
-                AssemblyName As_n = AssemblyName.GetAssemblyName(DPath);
-                if (As_n.FullName == AN.FullName && As_n.CultureInfo.Name == AN.CultureInfo.Name && As_n.Version >= AN.Version)
-                    return ALC.LoadFromAssemblyPath(DPath);
-            }
-            return null;
-        };
-        ALC.Unloading += (AssemblyLoadContext _) => EndResult.Unload();
         try
         {
-            Mountpt.GetMethod("Load")?.Invoke(null, null);
+            Plg.Domain.Call(Mountpt.GetMethod("Load"));
         }
         catch
         {
-            EndResult.State = LoadState.Crashed;
-            EndResult.Unload();
+            Plg.State = LoadState.Crashed;
+            Plg.Unload();
             return;
         }
 
@@ -344,11 +496,11 @@ public static class CodeOlive
                 lock (From.Dependents)
                 {
                     foreach (Plugin P in From.Dependents)
-                        if (P == EndResult)
+                        if (P == Plg)
                             return true;
                     int _inx = From.Dependents.Length;
                     Array.Resize(ref From.Dependents, _inx + 1);
-                    From.Dependents[_inx] = EndResult;
+                    From.Dependents[_inx] = Plg;
                 }
             }
             return true;
@@ -366,7 +518,6 @@ public static class CodeOlive
                         {
                             case "OliveSoftDependencyAttribute":
                             {
-
                                 if (!(Attr.ConstructorArguments[0].Value is String Dep) ||
                                     !(Attr.ConstructorArguments[1].Value is String DepFunc))
                                     continue;
@@ -385,9 +536,9 @@ public static class CodeOlive
                                 IsDefined = true;
                             }
                             break;
+
                             case "OliveHardDependencyAttribute":
                             {
-
                                 if (!(Attr.ConstructorArguments[0].Value is String Dep) ||
                                     !(Attr.ConstructorArguments[1].Value is String DepFunc))
                                     continue;
@@ -403,27 +554,27 @@ public static class CodeOlive
                                         {
                                             if (LoadTriggers[Dep].IsSet)
                                             {
-                                                Plugin Plg = LoadTriggers[Dep].Wait();
+                                                Plugin inj_Plg = LoadTriggers[Dep].Wait();
                                                 try
                                                 {
-                                                    MethodInfo I = Plg.Assembly.GetType(DepFunc)?.GetMethod(FuncName);
+                                                    MethodInfo I = inj_Plg.Assembly.GetType(DepFunc)?.GetMethod(FuncName);
                                                     if (I != null)
                                                     {
-                                                        if (!Inject(minf, I, Plg))
+                                                        if (!Inject(minf, I, inj_Plg))
                                                         {
-                                                            EndResult.Unload();
+                                                            Domain.Unload();
                                                             return;
                                                         }
                                                     }
                                                     else
                                                     {
-                                                        EndResult.Unload();
+                                                        Domain.Unload();
                                                         return;
                                                     }
                                                 }
                                                 catch
                                                 {
-                                                    EndResult.Unload();
+                                                    Domain.Unload();
                                                     return;
                                                 }
                                             }
@@ -436,20 +587,20 @@ public static class CodeOlive
                                     else
                                         HardDeps.Add(Dep, new List<Reflection_RemoteFunction>() { new Reflection_RemoteFunction { Class = DepFunc, FunctionName = FuncName, OgFunction = minf } });
                                 }
-                                else if(CoreLibrarys.ContainsKey(Dep))
+                                else if (CoreLibrarys.ContainsKey(Dep))
                                 {
                                     MethodInfo I = CoreLibrarys[Dep].GetMethod(DepFunc);
                                     if (I != null)
                                     {
                                         if (!Inject(minf, I, null))
                                         {
-                                            EndResult.Unload();
+                                            Domain.Unload();
                                             return;
                                         }
                                     }
                                     else
                                     {
-                                        EndResult.Unload();
+                                        Domain.Unload();
                                         return;
                                     }
                                 }
@@ -467,17 +618,17 @@ public static class CodeOlive
         {
             try
             {
-                Mountpt.GetMethod("Init")?.Invoke(null, null);
+                Plg.Domain.Call(Mountpt.GetMethod("Init"));
             }
             catch
             {
                 HardDeps = null;
                 SoftDeps = null;
-                EndResult.State = LoadState.Crashed;
-                EndResult.Unload();
+                Plg.State = LoadState.Crashed;
+                Domain.Unload();
                 return;
             }
-            EndResult.State = LoadState.Initulized;
+            Plg.State = LoadState.Initulized;
         }
         else
         {
@@ -500,33 +651,33 @@ public static class CodeOlive
                                 {
                                     if (!Inject(RF.OgFunction, I, P))
                                     {
-                                        EndResult.Unload();
+                                        Domain.Unload();
                                         return;
                                     }
                                 }
                                 else
                                 {
-                                    EndResult.Unload();
+                                    Domain.Unload();
                                     return;
                                 }
                             }
                             catch
                             {
-                                EndResult.Unload();
+                                Domain.Unload();
                                 return;
                             }
                         }
                         if (ActiveLoads.Count == 0 && SoftDeps.Count == 0)
                             try
                             {
-                                Mountpt.GetMethod("Init")?.Invoke(null, null);
+                                Plg.Domain.Call(Mountpt.GetMethod("Init"));
                             }
                             catch
                             {
                                 HardDeps = null;
                                 SoftDeps = null;
-                                EndResult.State = LoadState.Crashed;
-                                EndResult.Unload();
+                                Plg.State = LoadState.Crashed;
+                                Domain.Unload();
                                 return;
                             }
                     }
@@ -545,7 +696,7 @@ public static class CodeOlive
                                         continue;
                                     else
                                     {
-                                        EndResult.Unload();
+                                        Domain.Unload();
                                         foreach (KeyValuePair<string, _OnLoaded> Lo in ActiveLoads)
                                             LoadTriggers[Lo.Key].OnLoaded -= Lo.Value;
                                         return;
@@ -553,7 +704,7 @@ public static class CodeOlive
                                 }
                                 catch
                                 {
-                                    EndResult.Unload();
+                                    Domain.Unload();
                                     foreach (KeyValuePair<string, _OnLoaded> Lo in ActiveLoads)
                                         LoadTriggers[Lo.Key].OnLoaded -= Lo.Value;
                                     return;
@@ -576,22 +727,22 @@ public static class CodeOlive
                 }
             }
 
-            EndResult.OnUnload += (Plugin P) =>
+            Plg.OnUnload += (Plugin P) =>
             {
                 lock (LoadTriggers)
                     foreach (KeyValuePair<string, _OnLoaded> Lo in ActiveLoads)
                         LoadTriggers[Lo.Key].OnLoaded -= Lo.Value;
-                EndResult.State = LoadState.Failed;
+                Plg.State = LoadState.Failed;
             };
-            EndResult.State = LoadState.Loaded;
+            Plg.State = LoadState.Loaded;
         }
 
-        Plugins.Add(EndResult.Name, EndResult);
+        Plugins.Add(Plg.Name, Plg);
         lock (LoadTriggers)
             if (LoadTriggers.ContainsKey(__inf.Name))
-                LoadTriggers[__inf.Name].Set(EndResult);
+                LoadTriggers[__inf.Name].Set(Plg);
             else
-                LoadTriggers[__inf.Name] = new LoadSwitch(EndResult);
+                LoadTriggers[__inf.Name] = new LoadSwitch(Plg);
 
         if (SoftDeps.Count > 0)
         {
@@ -613,14 +764,14 @@ public static class CodeOlive
 
                 try
                 {
-                    Mountpt.GetMethod("Init")?.Invoke(null, null);
+                    Plg.Domain.Call(Mountpt.GetMethod("Init"));
                 }
                 catch
                 {
                     HardDeps = null;
                     SoftDeps = null;
-                    EndResult.State = LoadState.Crashed;
-                    EndResult.Unload();
+                    Plg.State = LoadState.Crashed;
+                    Domain.Unload();
                     return;
                 }
             }
@@ -636,22 +787,21 @@ public static class CodeOlive
             S();
             try
             {
-
-                Mountpt.GetMethod("Start")?.Invoke(null, null);
+                Plg.Domain.Call(Mountpt.GetMethod("Start"));
             }
             catch
             {
                 HardDeps = null;
                 SoftDeps = null;
-                EndResult.State = LoadState.Crashed;
-                EndResult.Unload();
+                Plg.State = LoadState.Crashed;
+                Domain.Unload();
             }
-            EndResult.State = LoadState.Started;
+            Plg.State = LoadState.Started;
         }
         else if (OnStart == null)
         {
-            EndResult.State = LoadState.Started;
-            Mountpt.GetMethod("Start")?.Invoke(null, null);
+            Plg.State = LoadState.Started;
+            Plg.Domain.Call(Mountpt.GetMethod("Start"));
         }
     }
 
@@ -674,7 +824,7 @@ public static class CodeOlive
                     {
                         try
                         {
-                            _d.Value.MountPoint.GetMethod("Start")?.Invoke(null, null);
+                            _d.Value.Domain.Call(_d.Value.MountPoint.GetMethod("Start"));
                             _d.Value.State = LoadState.Started;
                         }
                         catch
@@ -687,10 +837,14 @@ public static class CodeOlive
             }
     }
 
-    private class Plugin : OlivePlugin
+    private class Plugin : IOlivePlugin
     {
+        public OliveDomain Domain;
+
         public event _OnLoaded OnUnload;
+
         public event OlivePluginUnloadEvent OnUnLoad;
+
         private bool Unloaded = false;
         public LoadState State;
         public Assembly Assembly;
@@ -700,12 +854,13 @@ public static class CodeOlive
         public MethodReplacementState[] MRS;
         public Plugin[] Dependents;
 
-        String OlivePlugin.Name => this.Name;
-        Assembly OlivePlugin.Assembly => this.Assembly;
-        LoadState OlivePlugin.State => this.State;
-        PluginVersion OlivePlugin.Version => this.Version;
+        String IOlivePlugin.Name => this.Name;
+        Assembly IOlivePlugin.Assembly => this.Assembly;
+        LoadState IOlivePlugin.State => this.State;
+        PluginVersion IOlivePlugin.Version => this.Version;
 
         public void Unload() => this.Dispose();
+
         public void Dispose()
         {
             if (this.Unloaded)
@@ -731,9 +886,18 @@ public static class CodeOlive
 
                 Parallel.ForEach(this.Dependents, (Plugin P) => P.Dispose());
                 Parallel.ForEach(this.MRS, (MethodReplacementState S) => S.Dispose());
+
+                try
+                {
+                    Domain.Unload();
+                }
+                catch
+                {
+                }
             }
         }
     }
+
     public struct PluginLoadResult
     {
         public LoadError? Error;
@@ -741,12 +905,14 @@ public static class CodeOlive
         public PluginVersion Version;
         public uint OliveVersion;
     }
+
     public enum LoadError
     {
         NoOrInvalidCodeOliveInfoClass,
         IlegalName,
         OliveOutdated,
     }
+
     public struct PluginVersion
     {
         public static readonly PluginVersion Invalid = new PluginVersion
@@ -755,6 +921,7 @@ public static class CodeOlive
             Minor = 0,
             Build = null,
         };
+
         public PluginVersion(uint Major, uint Minor, string Build = null)
         {
             this.Major = Major;
@@ -850,17 +1017,20 @@ public static class CodeOlive
         public String Name;
         public Version PluginVersion;
     }
+
     public struct Reflection_Dependency
     {
         public string DependencyName;
         public Reflection_RemoteFunction[] Functions;
     }
+
     public struct Reflection_RemoteFunction
     {
         public string Class;
         public string FunctionName;
         public MethodInfo OgFunction;
     }
+
     public enum LoadState
     {
         Awaiting,
@@ -904,6 +1074,7 @@ public static class CodeOlive
         return state;
 #endif
     }
+
     private struct MethodReplacementState : IDisposable
     {
         public IntPtr Location;
@@ -924,7 +1095,8 @@ public static class CodeOlive
         }
     }
 }
-public interface OlivePlugin : IDisposable
+
+public interface IOlivePlugin : IDisposable
 {
     string Name { get; }
     CodeOlive.PluginVersion Version { get; }
@@ -932,6 +1104,8 @@ public interface OlivePlugin : IDisposable
     CodeOlive.LoadState State { get; }
 
     event OlivePluginUnloadEvent OnUnLoad;
+
     void Unload();
 }
-public delegate void OlivePluginUnloadEvent(OlivePlugin Plugin);
+
+public delegate void OlivePluginUnloadEvent(IOlivePlugin Plugin);
